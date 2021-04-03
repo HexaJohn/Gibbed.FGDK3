@@ -157,15 +157,22 @@ namespace Gibbed.FGDK3.ExportPreload
             var overlays = GetOverlays(preloadFile.Root);
             foreach (var overlay in overlays)
             {
-                ExportOverlayData($"{overlay.Id}", assetTypeCount, getExporter, overlay.Segment0, overlayBasePath, overlayZipPath, outputBasePath, endian);
-                ExportOverlayData($"{overlay.Id}d0", assetTypeCount, getExporter, overlay.Segment1, overlayBasePath, overlayZipPath, outputBasePath, endian);
-                for (int i = 0; i < localizationCount; i++)
+                try
                 {
-                    ExportOverlayData($"{overlay.Id}l{i}", assetTypeCount, getExporter, overlay.Segment2, overlayBasePath, overlayZipPath, outputBasePath, endian);
+                    ExportOverlayData($"{overlay.Id}", assetTypeCount, getExporter, overlay.Segment0, overlayBasePath, overlayZipPath, outputBasePath, endian);
+                    ExportOverlayData($"{overlay.Id}d0", assetTypeCount, getExporter, overlay.Segment1, overlayBasePath, overlayZipPath, outputBasePath, endian);
+                    for (int i = 0; i < localizationCount; i++)
+                    {
+                        ExportOverlayData($"{overlay.Id}l{i}", assetTypeCount, getExporter, overlay.Segment2, overlayBasePath, overlayZipPath, outputBasePath, endian);
+                    }
+                    for (int i = 0; i < localizationCount; i++)
+                    {
+                        ExportOverlayData($"{overlay.Id}d0l{i}", assetTypeCount, getExporter, overlay.Segment3, overlayBasePath, overlayZipPath, outputBasePath, endian);
+                    }
                 }
-                for (int i = 0; i < localizationCount; i++)
+                catch (Exception e)
                 {
-                    ExportOverlayData($"{overlay.Id}d0l{i}", assetTypeCount, getExporter, overlay.Segment3, overlayBasePath, overlayZipPath, outputBasePath, endian);
+                    Console.WriteLine($"Error during {overlay.Id}: {e}");
                 }
             }
         }
@@ -320,6 +327,58 @@ namespace Gibbed.FGDK3.ExportPreload
         private static void ExportShapes(PreloadFile.OverlayData data, Stream input, Endian endian, string outputBasePath)
         {
             var resourcesHeader = ResourcesHeader.Read(input, endian);
+            resourcesHeader.DumpMetadataToConsole();
+
+            // In 5.ovl at least
+            // Resource 2 subresource 0 offset 0x10 is the amount of entries in the Bone Other Lookup table, [len - 1]
+            // 5.ovl: 69
+
+            var boneAtaLookup = resourcesHeader.ResourceBytes[2][1];
+            var boneAtbLookup = resourcesHeader.ResourceBytes[2][2];
+            var boneNameLookup = resourcesHeader.ResourceBytes[2][resourcesHeader.ResourceBytes[2].Length - 2];
+            var boneOtherLookup = resourcesHeader.ResourceBytes[2][resourcesHeader.ResourceBytes[2].Length - 1];
+
+            var boneNames = new Dictionary<uint, string>();
+            Console.WriteLine($"Bones");
+            using (var boneNameLookupStream = new MemoryStream(boneNameLookup, false))
+            {
+                using (var boneNameStream = new MemoryStream(resourcesHeader.ResourceBytes[4][0], false))
+                {
+                    var idx = 0;
+                    while (boneNameLookupStream.Position != boneNameLookupStream.Length)
+                    {
+                        var ptr = boneNameLookupStream.ReadValueU32(endian);
+                        var other = boneNameLookupStream.ReadValueU32(endian);
+                        boneNameStream.Position = ptr;
+                        var name = boneNameStream.ReadStringZ(Encoding.Default);
+                        boneNames[other] = name;
+                        Console.WriteLine($" {idx} - {name} = {other}");
+                        idx++;
+                    }
+                }
+            }
+            Console.WriteLine($"BonesOther");
+            using (var boneOtherLookupStream = new MemoryStream(boneOtherLookup, false))
+            {
+                using (var boneAtaStream = new MemoryStream(boneAtaLookup, false))
+                {
+                    using (var boneAtbStream = new MemoryStream(boneAtbLookup, false))
+                    {
+                        var idx = 0;
+                        while (boneOtherLookupStream.Position != boneOtherLookupStream.Length)
+                        {
+                            var d = boneAtaStream.ReadValueU32(endian);
+                            var e = boneAtbStream.ReadValueU32(endian);
+                            var a = boneOtherLookupStream.ReadValueU32(endian);
+                            var realBoneIndex = boneOtherLookupStream.ReadValueU32(endian);
+                            var c = boneOtherLookupStream.ReadValueU32(endian);
+                            Console.WriteLine($" {idx} = {d} {e} {a} {realBoneIndex} {c}");
+                            idx++;
+                        }
+                    }
+                }
+            }
+            Console.WriteLine($"BC {boneNames.Count}");
 
             for (int i = 0; i < data.ElementCount; i++)
             {
@@ -329,7 +388,7 @@ namespace Gibbed.FGDK3.ExportPreload
                 {
                     shapeHeader = ReadShapeHeader(temp, endian);
                 }
-                ExportShape(shapeHeader, input, endian, Path.Combine(outputBasePath, $"shape_{i}"));
+                ExportShape(shapeHeader, input, endian, Path.Combine(outputBasePath, $"shape_{i}"), boneNames);
             }
         }
 
@@ -415,7 +474,7 @@ namespace Gibbed.FGDK3.ExportPreload
             public ShapeJoint Root = new ShapeJoint();
         }
 
-        private static void ExportShape(ShapeHeader header, Stream input, Endian endian, string outputBasePath)
+        private static void ExportShape(ShapeHeader header, Stream input, Endian endian, string outputBasePath, Dictionary<uint, string> boneNames)
         {
             var unknown2 = new uint[header.Unknown8Count];
             for (int i = 0; i < header.Unknown8Count; i++)
@@ -429,6 +488,33 @@ namespace Gibbed.FGDK3.ExportPreload
                 {
                     var sbc = new ShapeBuildContext();
                     sbc.BoneIDToJoint[0] = sbc.Root;
+                    // Comments
+                    sbc.Comments.Add($"unknown0 = {header.Unknown0}");
+                    sbc.Comments.Add($"unknown1 = {header.Unknown1}");
+                    sbc.Comments.Add($"unknown2 = {header.Unknown2}");
+                    sbc.Comments.Add($"unknown3 = {header.Unknown3}");
+                    sbc.Comments.Add($"unknown4 = {header.Unknown4}");
+                    sbc.Comments.Add($"unknown5 = {header.Unknown5}");
+                    sbc.Comments.Add($"unknown6 = {header.Unknown6}");
+                    sbc.Comments.Add($"unknown9 = {header.Unknown9}");
+                    sbc.Comments.Add($"unknown10 = {header.Unknown10}");
+                    sbc.Comments.Add($"unknown11 = {header.Unknown11}");
+                    sbc.Comments.Add($"unknown12 = {header.Unknown12}");
+                    sbc.Comments.Add($"unknown13 = {header.Unknown13}");
+                    sbc.Comments.Add($"unknown14 = {header.Unknown14}");
+                    sbc.Comments.Add($"unknown15 = {header.Unknown15}");
+                    sbc.Comments.Add($"unknown16 = {header.Unknown16}");
+                    for (int ix = 0; ix < header.Unknown8Count; ix++)
+                        sbc.Comments.Add($"local unknown2[{ix}] = {unknown2[ix]}");
+                    // Import bone names
+                    foreach (uint b in boneNames.Keys)
+                    {
+                        var j = new ShapeJoint();
+                        j.Name = ConvBoneName(boneNames[b]);
+                        sbc.Root.Children.Add(j);
+                        sbc.BoneIDToJoint[(byte) b] = j;
+                    }
+                    // Continue
                     ExportShapeObject(input, endian, sbc);
 
                     writer.WriteLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
@@ -617,6 +703,27 @@ namespace Gibbed.FGDK3.ExportPreload
         {
             // sending this to N50, which is roughly the maximum precision, causes the points to disappear entirely for reasons
             return f.ToString("N10");
+        }
+        private static string ConvBoneName(string s)
+        {
+            string res = "";
+            foreach (char c in s)
+            {
+                if (
+                    ((c >= 'A') && (c <= 'Z')) ||
+                    ((c >= 'a') && (c <= 'z')) ||
+                    ((c >= '0') && (c <= '9')) ||
+                    (c == '_')
+                )
+                {
+                    res += c;
+                }
+                else
+                {
+                    res += '_';
+                }
+            }
+            return res;
         }
 
         private static void ExportShapeObject(Stream input, Endian endian, ShapeBuildContext context)
