@@ -20,6 +20,7 @@
  *    distribution.
  */
 
+using System;
 using System.IO;
 using Gibbed.IO;
 
@@ -56,7 +57,8 @@ namespace Gibbed.FGDK3.FileFormats
                 resourceBytes[i] = new byte[resource.Subresources.Length][];
                 for (int j = 0; j < resource.Subresources.Length; j++)
                 {
-                    var subresource = resource.Subresources[j];
+                    ref var subresource = ref resource.Subresources[j];
+                    subresource.DataPosition = input.Position;
                     resourceBytes[i][j] = input.ReadBytes(subresource.DataSize);
                 }
                 resources[i] = resource;
@@ -67,6 +69,22 @@ namespace Gibbed.FGDK3.FileFormats
             instance.Dependencies = dependencies;
             instance.ResourceBytes = resourceBytes;
             return instance;
+        }
+
+        public void DumpMetadataToConsole()
+        {
+            Console.WriteLine("Resources Header");
+            for (int i = 0; i < Resources.Length; i++)
+            {
+                var res = Resources[i];
+                Console.WriteLine($" Resource {i} : {res.Subresources.Length}");
+                for (int j = 0; j < res.Subresources.Length; j++)
+                {
+                    var sr = res.Subresources[j];
+                    Console.WriteLine($" Subresource {j}");
+                    Console.WriteLine($"   @ {sr.DataPosition}, {sr.DataSize} bytes");
+                }
+            }
         }
 
         private static Resource ReadResource(Stream input, Endian endian)
@@ -95,6 +113,7 @@ namespace Gibbed.FGDK3.FileFormats
 
             Subresource instance;
             instance.DataSize = dataSize;
+            instance.DataPosition = 0;
             instance.Unknowns = unknowns;
             return instance;
         }
@@ -131,6 +150,8 @@ namespace Gibbed.FGDK3.FileFormats
         public struct Subresource
         {
             public int DataSize;
+            // Calculated during data reading.
+            public long DataPosition;
             internal Unknown[] Unknowns;
         }
 
