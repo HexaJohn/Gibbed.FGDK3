@@ -157,6 +157,9 @@ namespace Gibbed.FGDK3.ExportPreload
             var overlays = GetOverlays(preloadFile.Root);
             foreach (var overlay in overlays)
             {
+                try
+                {
+
                 ExportOverlayData($"{overlay.Id}", assetTypeCount, getExporter, overlay.Segment0, overlayBasePath, overlayZipPath, outputBasePath, endian);
                 ExportOverlayData($"{overlay.Id}d0", assetTypeCount, getExporter, overlay.Segment1, overlayBasePath, overlayZipPath, outputBasePath, endian);
                 for (int i = 0; i < localizationCount; i++)
@@ -166,6 +169,11 @@ namespace Gibbed.FGDK3.ExportPreload
                 for (int i = 0; i < localizationCount; i++)
                 {
                     ExportOverlayData($"{overlay.Id}d0l{i}", assetTypeCount, getExporter, overlay.Segment3, overlayBasePath, overlayZipPath, outputBasePath, endian);
+                }
+                }
+                catch
+                {
+                    continue;
                 }
             }
         }
@@ -183,6 +191,8 @@ namespace Gibbed.FGDK3.ExportPreload
             name = $"{name}.ovl";
             using (var input = LoadOverlayFile(name, basePath, zipPath))
             {
+                //Console.WriteLine($"{name}");
+
                 if (input == null)
                 {
                     // no file
@@ -200,10 +210,10 @@ namespace Gibbed.FGDK3.ExportPreload
                     var export = getExporter(assetType);
                     if (export == null)
                     {
-                        Console.WriteLine($"Exporter for type#{assetType} unavailable, aborting export for '{name}'.");
+                        //Console.WriteLine($"Exporter for type#{assetType} unavailable, aborting export for '{name}'.");
                         return;
                     }
-                    Console.WriteLine($"Exporting type#{assetType} assets from '{name}'...");
+                    //Console.WriteLine($"Exporting type#{assetType} assets from '{name}'...");
                     export(data, input, endian, outputBasePath);
                 }
             }
@@ -222,11 +232,15 @@ namespace Gibbed.FGDK3.ExportPreload
 
         private static Action<PreloadFile.OverlayData, Stream, Endian, string> GetZooExporter(int assetType)
         {
+            Console.WriteLine("Asset Type " + assetType.ToString());
             switch (assetType)
             {
-                case 0: return ExportText;
-                case 1: return ExportTextures;
-                case 3: return ExportShapes;
+                case 0:
+                    return ExportText;
+                case 1:
+                    return ExportTextures;
+                case 2:
+                    return ExportShapes;
             }
             return null;
         }
@@ -254,11 +268,13 @@ namespace Gibbed.FGDK3.ExportPreload
 
         private static void ExportTextures(PreloadFile.OverlayData data, Stream input, Endian endian, string outputBasePath)
         {
+            //Console.WriteLine("Starting Texture Export...");
             var textureCount = input.ReadValueS32(endian);
             var resourcesHeader = ResourcesHeader.Read(input, endian);
 
             for (int i = 0; i < textureCount; i++)
             {
+                //Console.WriteLine("Exporting Texture #" + (i+1).ToString());
                 var textureFlags = resourcesHeader.ResourceBytes[2][i * 2][0];
                 ExportTexture(textureFlags, input, endian, Path.Combine(outputBasePath, $"texture_{i}"));
             }
@@ -319,10 +335,14 @@ namespace Gibbed.FGDK3.ExportPreload
 
         private static void ExportShapes(PreloadFile.OverlayData data, Stream input, Endian endian, string outputBasePath)
         {
+            Console.WriteLine("Starting Collada Export...");
             var resourcesHeader = ResourcesHeader.Read(input, endian);
 
             for (int i = 0; i < data.ElementCount; i++)
             {
+                try
+                {
+                Console.WriteLine("Exporting Mesh " + (i+1).ToString() + " of " + (data.ElementCount).ToString());
                 var shapeHeaderBytes = resourcesHeader.ResourceBytes[0][1 + (i * 2)];
                 ShapeHeader shapeHeader;
                 using (var temp = new MemoryStream(shapeHeaderBytes, false))
@@ -330,6 +350,12 @@ namespace Gibbed.FGDK3.ExportPreload
                     shapeHeader = ReadShapeHeader(temp, endian);
                 }
                 ExportShape(shapeHeader, input, endian, Path.Combine(outputBasePath, $"shape_{i}"));
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("Collada Export Failed: " + e.Message);
+                    continue;
+                }
             }
         }
 
